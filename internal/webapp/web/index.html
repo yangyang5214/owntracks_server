@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>足迹放映机</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1 id="title">足迹放映机</h1>
+      <p class="sub" id="subtitle">加载全库轨迹 · 已自动降采样</p>
+    </div>
+  </header>
+
+  <section class="stats" id="stats"></section>
+
+  <div id="map"></div>
+
+  <footer class="timeline">
+    <label class="tl-label">时间轴 <span id="tl-range"></span></label>
+    <input type="range" id="tl" min="0" max="1000" value="0" />
+    <div class="tl-actions">
+      <button type="button" id="play">播放</button>
+      <button type="button" id="reset">回到起点</button>
+    </div>
+  </footer>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="/app.js"></script>
+</body>
+</html>

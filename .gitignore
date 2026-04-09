@@ -1,0 +1,35 @@
+# 运行时日志
+/logs/
+
+# 编译产物
+/bin/
+/owntracks_server
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go
+/vendor/
+*.test
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+
+# 环境变量与密钥（勿提交）
+.env
+.env.*
+*.pem
+*.key
+
+# 编辑器与 IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store

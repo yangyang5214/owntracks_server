@@ -1,0 +1,26 @@
+[Unit]
+Description=OwnTracks HTTP ingest + Web console (ClickHouse)
+Documentation=https://owntracks.org/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nobody
+WorkingDirectory=/opt/owntracks
+ExecStart=/opt/owntracks/owntracks_server server
+Restart=on-failure
+RestartSec=5
+
+# User=nobody 通常无法写 WorkingDirectory/logs；默认仅 stdout，由 journal 收集。需要文件日志时：对日志目录 chown，并在 /etc/default 里设置 LOG_FILE=…（会覆盖本行）
+Environment=LOG_FILE=-
+
+# 可选：WEB_ADDR、HTTP_USER、HTTP_PASS（/pub Basic Auth）、CLICKHOUSE_DSN 等
+EnvironmentFile=-/etc/default/owntracks-server
+
+LimitNOFILE=65535
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

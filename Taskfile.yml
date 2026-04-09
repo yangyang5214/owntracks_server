@@ -1,0 +1,55 @@
+version: '3'
+
+vars:
+  BINARY: owntracks_server
+  GOOS: linux
+  GOARCH: amd64
+  CGO_ENABLED: '0'
+  REMOTE_DIR: /opt/owntracks
+  SYSTEMD_UNIT: owntracks-server.service
+  SYSTEMD_UNIT_SRC: deploy/owntracks-server.service
+
+tasks:
+  default:
+    silent: true
+    cmds:
+      - task --list
+
+  wire:
+    desc: 重新生成 internal/di/wire_gen.go（修改 internal/di/wire.go 后执行）
+    cmds:
+      - go run github.com/google/wire/cmd/wire@latest ./internal/di
+
+  build:
+    desc: 交叉编译 Linux 二进制（默认 amd64，可覆盖 GOARCH）
+    cmds:
+      - GOOS={{.GOOS}} GOARCH={{.GOARCH}} CGO_ENABLED={{.CGO_ENABLED}} go build -ldflags="-s -w" -trimpath -o {{.BINARY}} ./cmd/server
+
+  deploy:
+    desc: '部署二进制：若已安装 systemd 则 stop → scp → start。例 task deploy -- lxa'
+    vars:
+      H: '{{ index (splitList " " (trim .CLI_ARGS)) 0 }}'
+    preconditions:
+      - sh: 'test -n "{{trim .CLI_ARGS}}"'
+        msg: '用法: task deploy -- <host>'
+    cmds:
+      - task build
+      - ssh -o StrictHostKeyChecking=accept-new {{.H}} "mkdir -p {{.REMOTE_DIR}}"
+      - ssh -o StrictHostKeyChecking=accept-new {{.H}} "if [ -f /etc/systemd/system/{{.SYSTEMD_UNIT}} ]; then systemctl stop {{.SYSTEMD_UNIT}}; fi"
+      - scp -O -o StrictHostKeyChecking=accept-new {{.BINARY}} {{.H}}:{{.REMOTE_DIR}}/
+      - ssh -o StrictHostKeyChecking=accept-new {{.H}} "if [ -f /etc/systemd/system/{{.SYSTEMD_UNIT}} ]; then systemctl start {{.SYSTEMD_UNIT}}; fi"
+      - echo "已部署 {{.H}}:{{.REMOTE_DIR}}/{{.BINARY}}"
+
+  install-service:
+    desc: '安装 systemd 单元并启用服务，需先 deploy；例 task install-service -- lxa'
+    vars:
+      H: '{{ index (splitList " " (trim .CLI_ARGS)) 0 }}'
+    preconditions:
+      - sh: 'test -n "{{trim .CLI_ARGS}}"'
+        msg: '用法: task install-service -- <host>'
+    cmds:
+      - test -f {{.SYSTEMD_UNIT_SRC}}
+      - ssh -o StrictHostKeyChecking=accept-new {{.H}} "mkdir -p {{.REMOTE_DIR}}"
+      - scp -O -o StrictHostKeyChecking=accept-new {{.SYSTEMD_UNIT_SRC}} {{.H}}:{{.REMOTE_DIR}}/{{.SYSTEMD_UNIT}}
+      - ssh -o StrictHostKeyChecking=accept-new {{.H}} "install -m 644 {{.REMOTE_DIR}}/{{.SYSTEMD_UNIT}} /etc/systemd/system/{{.SYSTEMD_UNIT}} && systemctl daemon-reload && systemctl enable --now owntracks-server.service"
+      - echo "已安装并启动 {{.SYSTEMD_UNIT}} @ {{.H}}"

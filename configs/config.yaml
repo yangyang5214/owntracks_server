@@ -1,0 +1,33 @@
+# OwnTracks HTTP：App 选 HTTP，URL 指向本服务，例如：
+#   https://主机:8080/pub/用户名/设备名
+# 或 POST /pub?topic=owntracks%2F用户名%2F设备名
+# 认证见 auth.http_user/http_pass（Basic Auth），留空则匿名。
+# 环境变量可覆盖：WEB_ADDR、HTTP_USER、HTTP_PASS、CLICKHOUSE_DSN、LOG_FILE
+
+# Kratos 日志：默认写入控制台 + logs/owntracks.log；LOG_FILE 可覆盖路径；设为 "-" 仅控制台
+log:
+  file: logs/owntracks.log
+
+auth:
+  http_user: ""
+  http_pass: ""
+
+# Web 控制台 + HTTP 上报（与 App 填写的 host:port 一致）
+# 默认端口 8080；可改 port，或增加 listen 写完整地址（如 ":8443"，优先于 port）
+web:
+  port: 8080
+  title: "我的足迹"
+  # members 留空 = 不按 user 过滤；若填写则只展示这些 user
+  members: []
+  # static_dir: ""  # 非空则从此目录提供静态文件，覆盖内置页面
+
+clickhouse:
+  # 二选一：dsn 整串；或填写 host（必填）+ port/user/password/database 分字段
+  # dsn: "clickhouse://default@127.0.0.1:9000/owntracks"
+  # host: "127.0.0.1"
+  dsn: ""
+  host: ""
+  port: 9000
+  user: "default"
+  password: ""
+  database: owntracks
