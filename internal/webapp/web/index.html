@@ -2,33 +2,107 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>足迹放映机</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>轨迹热力图</title>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css" />
   <link rel="stylesheet" href="/style.css" />
 </head>
-<body>
-  <header class="top">
-    <div>
-      <h1 id="title">足迹放映机</h1>
-      <p class="sub" id="subtitle">加载全库轨迹 · 已自动降采样</p>
-    </div>
-  </header>
+<body class="loading">
 
-  <section class="stats" id="stats"></section>
+  <!-- PIN 认证遮罩 -->
+  <div class="pin-overlay" id="pin-overlay">
+    <div class="pin-card">
+      <div class="pin-logo">
+        <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="#4db8ff" stroke-width="1.5">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M12 2v4M12 18v4M2 12h4M18 12h4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+        </svg>
+      </div>
+      <h2 class="pin-title">轨迹热力图</h2>
+      <p class="pin-hint">请输入 4 位访问密码</p>
+      <div class="pin-digits" id="pin-digits">
+        <input type="text" inputmode="numeric" maxlength="1" class="pin-digit" autocomplete="off" />
+        <input type="text" inputmode="numeric" maxlength="1" class="pin-digit" autocomplete="off" />
+        <input type="text" inputmode="numeric" maxlength="1" class="pin-digit" autocomplete="off" />
+        <input type="text" inputmode="numeric" maxlength="1" class="pin-digit" autocomplete="off" />
+      </div>
+      <p class="pin-error" id="pin-error"></p>
+    </div>
+  </div>
 
   <div id="map"></div>
 
-  <footer class="timeline">
-    <label class="tl-label">时间轴 <span id="tl-range"></span></label>
-    <input type="range" id="tl" min="0" max="1000" value="0" />
-    <div class="tl-actions">
-      <button type="button" id="play">播放</button>
-      <button type="button" id="reset">回到起点</button>
+  <!-- Brand -->
+  <div class="panel panel-brand" id="brand">
+    <div class="brand-icon">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#4db8ff" stroke-width="1.5">
+        <circle cx="12" cy="12" r="10"/>
+        <path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>
+      </svg>
     </div>
-  </footer>
+    <div>
+      <h1 id="title">轨迹热力图</h1>
+      <p class="subtitle" id="subtitle">正在加载轨迹数据…</p>
+    </div>
+  </div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <!-- Stats -->
+  <div class="panel panel-stats" id="stats-panel">
+    <div class="stat-row">
+      <span class="stat-label">总里程</span>
+      <span class="stat-value" id="s-dist">--</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">记录点</span>
+      <span class="stat-value" id="s-pts">--</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">最近活动</span>
+      <span class="stat-value" id="s-last">--</span>
+    </div>
+  </div>
+
+  <!-- Timeline -->
+  <div class="panel panel-timeline" id="timeline-panel">
+    <div class="tl-header">
+      <span class="tl-info" id="tl-info">时间轴（裁剪热力范围）</span>
+      <span class="tl-time" id="tl-time"></span>
+    </div>
+    <input type="range" id="tl" min="0" max="1" value="1" step="1" />
+    <div class="tl-buttons">
+      <button class="btn btn-sm" id="btn-reset" title="回到起点">
+        <svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg>
+      </button>
+      <button class="btn btn-sm" id="btn-play" title="播放">
+        <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+      </button>
+      <button class="btn btn-sm" id="btn-end" title="跳到最新">
+        <svg viewBox="0 0 24 24"><path d="M16 18h2V6h-2zm-8.5-6 8.5 6V6z" transform="scale(-1,1) translate(-24,0)"/></svg>
+      </button>
+      <span class="tl-percent" id="tl-pct">100%</span>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="panel panel-controls" id="controls-panel">
+    <button class="btn active" id="btn-heat" title="显示/隐藏热力图">
+      <svg viewBox="0 0 24 24"><path d="M12 21a9 9 0 0 0 9-9c0-4.97-4.03-9-9-9s-9 4.03-9 9c0 2.38 1.19 4.47 3 5.74V17a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-1.26c1.81-1.27 3-3.36 3-5.74zm-4-9a2 2 0 1 1 4 0 2 2 0 0 1-4 0zm6 0a2 2 0 1 1 4 0 2 2 0 0 1-4 0z"/></svg>
+    </button>
+    <button class="btn" id="btn-sat" title="卫星视图">
+      <svg viewBox="0 0 24 24"><path d="M20.5 3l-.16.03L15 5.1 9 3 3.36 4.9c-.21.07-.36.25-.36.48V20.5c0 .28.22.5.5.5l.16-.03L9 18.9l6 2.1 5.64-1.9c.21-.07.36-.25.36-.48V3.5c0-.28-.22-.5-.5-.5zM15 19l-6-2.11V5l6 2.11V19z"/></svg>
+    </button>
+    <div class="btn-divider"></div>
+    <button class="btn" id="btn-zin" title="放大">
+      <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z"/></svg>
+    </button>
+    <button class="btn" id="btn-zout" title="缩小">
+      <svg viewBox="0 0 24 24"><path d="M19 13H5v-2h14z"/></svg>
+    </button>
+  </div>
+
+  <div class="attribution">© <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> © <a href="https://carto.com/attributions" target="_blank">CARTO</a></div>
+
+  <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

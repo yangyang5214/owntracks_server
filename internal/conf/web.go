@@ -9,6 +9,7 @@ type FileWeb struct {
 	TeamName  string         `yaml:"team_name"` // 兼容旧字段，与 title 二选一
 	Members   []FileTeamUser `yaml:"members"`   // 可选：非空则只展示这些 user；空=全部
 	StaticDir string         `yaml:"static_dir"`
+	Pin       string         `yaml:"pin"` // 4 位数字访问密码；留空则不需要认证
 }
 
 // FileTeamUser 团队成员（对应路径 /pub/{user}/… 中的 user）。
@@ -28,6 +29,8 @@ type WebConfig struct {
 	// HTTP 上报 /pub 的 Basic Auth；与 auth.http_user / http_pass 一致；皆空则匿名。
 	HTTPUser string
 	HTTPPass string
+	// Pin 4 位数字访问密码；空则无需认证。
+	Pin string
 }
 
 // TeamMember 运行时成员（含展示名）。

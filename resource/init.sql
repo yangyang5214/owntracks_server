@@ -3,10 +3,12 @@
 
 CREATE DATABASE IF NOT EXISTS owntracks;
 
+-- 注意：若库表已存在且仍为按月分区，ClickHouse 无法原地改分区键；需建新表迁数据或保持原表。
+
 -- ---------------------------------------------------------------------------
 -- 1) 位置历史（主表）
 -- 引擎: MergeTree — 追加型时序，按用户/设备/时间范围扫描最优。
--- 分区: 按月 — 分区数适中，便于按时间裁剪。
+-- 分区: 按年 — 分区数少，适合多年长期保留；单年数据量极大时可再改为按月。
 -- 排序: (user, device, event_time, ingest_seq) — 同一秒内多点用 ingest_seq 保序。
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS owntracks.locations
@@ -36,7 +38,7 @@ CREATE TABLE IF NOT EXISTS owntracks.locations
     `payload_json` String COMMENT '完整 JSON，便于扩展字段' CODEC(ZSTD(3))
 )
 ENGINE = MergeTree
-PARTITION BY toYYYYMM(event_time)
+PARTITION BY toYear(event_time)
 ORDER BY (user, device, event_time, ingest_seq)
 SETTINGS index_granularity = 8192;
 
@@ -69,7 +71,7 @@ CREATE TABLE IF NOT EXISTS owntracks.latest_locations
     `payload_json` String CODEC(ZSTD(3))
 )
 ENGINE = ReplacingMergeTree(ver)
-PARTITION BY toYYYYMM(event_time)
+PARTITION BY toYear(event_time)
 ORDER BY (user, device)
 SETTINGS index_granularity = 8192;
 
@@ -111,6 +113,44 @@ CREATE TABLE IF NOT EXISTS owntracks.events
     `payload_json` String CODEC(ZSTD(3))
 )
 ENGINE = MergeTree
-PARTITION BY toYYYYMM(event_time)
+PARTITION BY toYear(event_time)
 ORDER BY (user, device, event_time, message_type)
 SETTINGS index_granularity = 8192;
+
+-- ---------------------------------------------------------------------------
+-- 4) 热力图预聚合网格（物化视图增量维护，读图走本表避免全表扫 locations）
+-- 说明：
+--   - 新写入 locations 时 MV 自动按日 + 用户 + 设备 + 网格累加，非「每天批跑」；
+--   - 若希望合并分区可定期 OPTIMIZE TABLE owntracks.heatmap_grid FINAL；
+--   - 上线前历史数据须执行 resource/heatmap_backfill.sql（仅一次，勿重复执行以免重复计数）。
+-- 网格：g_lat/g_lon = round(lat/lon * 10000)，赤道附近约 11m。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS owntracks.heatmap_grid
+(
+    `day` Date COMMENT 'UTC 日历日',
+    `user` LowCardinality(String),
+    `device` LowCardinality(String),
+    `g_lat` Int32 COMMENT 'round(lat * 10000)',
+    `g_lon` Int32 COMMENT 'round(lon * 10000)',
+    `cnt` UInt64 COMMENT '落入该格子的点数',
+    `sum_lat` Float64 COMMENT '纬度之和，用于加权中心',
+    `sum_lon` Float64 COMMENT '经度之和'
+)
+ENGINE = SummingMergeTree()
+PARTITION BY toYear(day)
+ORDER BY (day, user, device, g_lat, g_lon)
+SETTINGS index_granularity = 8192;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS owntracks.locations_to_heatmap_mv
+TO owntracks.heatmap_grid
+AS
+SELECT
+    toDate(event_time) AS day,
+    user,
+    device,
+    toInt32(round(lat * 10000)) AS g_lat,
+    toInt32(round(lon * 10000)) AS g_lon,
+    toUInt64(1) AS cnt,
+    lat AS sum_lat,
+    lon AS sum_lon
+FROM owntracks.locations;

@@ -16,7 +16,8 @@ auth:
 # 默认端口 8080；可改 port，或增加 listen 写完整地址（如 ":8443"，优先于 port）
 web:
   port: 8080
-  title: "我的足迹"
+  title: ""
+  pin: "1234"
   # members 留空 = 不按 user 过滤；若填写则只展示这些 user
   members: []
   # static_dir: ""  # 非空则从此目录提供静态文件，覆盖内置页面

@@ -64,9 +64,28 @@ type TeamMeta struct {
 	MaxIntervalSec   int      `json:"max_interval_sec"`
 }
 
+// HeatmapCell 预聚合网格单元（用于前端热力图层）。
+type HeatmapCell struct {
+	Lat float64 `json:"lat"`
+	Lon float64 `json:"lon"`
+	W   float64 `json:"w"` // 原始采样点数之和，越大颜色越热
+}
+
+// HeatmapResult GET /api/heatmap。
+type HeatmapResult struct {
+	Title       string        `json:"title"`
+	From        string        `json:"from"`
+	To          string        `json:"to"`
+	GridMeters  float64       `json:"grid_meters_approx"` // 赤道附近约等效边长，米
+	CellNote    string        `json:"cell_note"`
+	Cells       []HeatmapCell `json:"cells"`
+	Precomputed bool          `json:"precomputed"` // true：来自 heatmap_grid 物化汇总
+}
+
 // Store 历史数据访问抽象。from/to 为 nil 表示全表时间范围。
 type Store interface {
 	Meta(ctx context.Context) TeamMeta
 	Journey(ctx context.Context, from, to *time.Time, intervalSec int) (*JourneyResult, error)
 	Stats(ctx context.Context, from, to *time.Time) (*StatsResult, error)
+	Heatmap(ctx context.Context, from, to *time.Time, minCount int) (*HeatmapResult, error)
 }

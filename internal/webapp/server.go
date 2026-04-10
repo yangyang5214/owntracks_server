@@ -2,7 +2,9 @@ package webapp
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -44,7 +46,7 @@ func Run(cfg *conf.WebConfig, lg *log.Helper) error {
 		Database:  cfg.CHDatabase,
 		Title:     cfg.Title,
 		Members:   cfg.Members,
-		MaxPoints: 4000,
+		MaxPoints: 10000,
 	}
 
 	var static http.Handler
@@ -58,12 +60,44 @@ func Run(cfg *conf.WebConfig, lg *log.Helper) error {
 		static = http.FileServer(http.FS(sub))
 	}
 
+	// PIN 认证
+	pinFP, pinTK := "", ""
+	if cfg.Pin != "" {
+		pinFP = pinFingerprint(cfg.Pin)
+		pinTK = pinToken(cfg.Pin)
+		lg.Infof("PIN 访问保护已启用（fingerprint %s）", pinFP[:8])
+	}
+	guard := func(h http.Handler) http.Handler { return pinGuard(pinTK, h) }
+
 	mux := http.NewServeMux()
 	registerPubRoutes(mux, st, cfg, lg)
-	mux.Handle("GET /api/meta", jsonHandler(func(w http.ResponseWriter, r *http.Request) error {
-		return writeJSON(w, st.Meta(r.Context()))
+
+	// PIN 认证端点（不受 guard 保护）
+	mux.Handle("GET /api/pin-status", jsonHandler(func(w http.ResponseWriter, r *http.Request) error {
+		return writeJSON(w, map[string]any{"required": cfg.Pin != "", "fingerprint": pinFP})
 	}))
-	mux.Handle("GET /api/journey", jsonHandler(func(w http.ResponseWriter, r *http.Request) error {
+	mux.Handle("POST /api/verify-pin", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		var body struct {
+			Pin string `json:"pin"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "无效请求"})
+			return
+		}
+		if body.Pin != cfg.Pin {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "fingerprint": pinFP, "token": pinTK})
+	}))
+
+	mux.Handle("GET /api/meta", guard(jsonHandler(func(w http.ResponseWriter, r *http.Request) error {
+		return writeJSON(w, st.Meta(r.Context()))
+	})))
+	mux.Handle("GET /api/journey", guard(jsonHandler(func(w http.ResponseWriter, r *http.Request) error {
 		q := r.URL.Query()
 		var from, to *time.Time
 		if s := q.Get("from"); s != "" {
@@ -93,8 +127,39 @@ func Run(cfg *conf.WebConfig, lg *log.Helper) error {
 			return err
 		}
 		return writeJSON(w, out)
-	}))
-	mux.Handle("GET /api/stats", jsonHandler(func(w http.ResponseWriter, r *http.Request) error {
+	})))
+	mux.Handle("GET /api/heatmap", guard(jsonHandler(func(w http.ResponseWriter, r *http.Request) error {
+		q := r.URL.Query()
+		var from, to *time.Time
+		if s := q.Get("from"); s != "" {
+			t, err := parseQueryTime(s)
+			if err != nil {
+				return err
+			}
+			t = t.UTC()
+			from = &t
+		}
+		if s := q.Get("to"); s != "" {
+			t, err := parseQueryTime(s)
+			if err != nil {
+				return err
+			}
+			t = t.UTC()
+			to = &t
+		}
+		minCount := 1
+		if s := q.Get("min_count"); s != "" {
+			if n, err := strconv.Atoi(s); err == nil && n > 0 {
+				minCount = n
+			}
+		}
+		out, err := st.Heatmap(r.Context(), from, to, minCount)
+		if err != nil {
+			return err
+		}
+		return writeJSON(w, out)
+	})))
+	mux.Handle("GET /api/stats", guard(jsonHandler(func(w http.ResponseWriter, r *http.Request) error {
 		q := r.URL.Query()
 		var from, to *time.Time
 		if s := q.Get("from"); s != "" {
@@ -118,7 +183,7 @@ func Run(cfg *conf.WebConfig, lg *log.Helper) error {
 			return err
 		}
 		return writeJSON(w, out)
-	}))
+	})))
 	// 通配静态资源（Go 1.22+）；/api/* 已优先匹配
 	mux.Handle("GET /{path...}", static)
 
@@ -159,6 +224,38 @@ func withCORS(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// pinFingerprint 用于前端判断 PIN 是否变更（缓存失效）。
+func pinFingerprint(pin string) string {
+	h := sha256.Sum256([]byte("owntracks-fp:" + pin))
+	return hex.EncodeToString(h[:8])
+}
+
+// pinToken 用于 API 请求鉴权。
+func pinToken(pin string) string {
+	h := sha256.Sum256([]byte("owntracks-tk:" + pin))
+	return hex.EncodeToString(h[:16])
+}
+
+// pinGuard 保护 API 端点；token 为空时直接放行。
+func pinGuard(token string, next http.Handler) http.Handler {
+	if token == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t := r.URL.Query().Get("_t")
+		if t == "" {
+			t = r.Header.Get("X-Pin-Token")
+		}
+		if t != token {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "需要认证"})
 			return
 		}
 		next.ServeHTTP(w, r)

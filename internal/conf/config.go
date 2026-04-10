@@ -79,6 +79,7 @@ func FileToWeb(f *File) *WebConfig {
 	}
 	w.HTTPUser = f.Auth.HTTPUser
 	w.HTTPPass = f.Auth.HTTPPass
+	w.Pin = f.Web.Pin
 	return w
 }
 

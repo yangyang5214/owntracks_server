@@ -300,6 +300,107 @@ ORDER BY user, device
 	}, rows.Err()
 }
 
+// Heatmap读取 heatmap_grid 预聚合表（由物化视图随 locations 增量维护；历史数据需执行一次 backfill SQL）。
+// 网格：约 1e-4° 步长（赤道 ~11m），与 init.sql 中 MV 定义一致。
+func (c *CH) Heatmap(ctx context.Context, from, to *time.Time, minCount int) (*HeatmapResult, error) {
+	if minCount < 1 {
+		minCount = 1
+	}
+	bmin, bmax, err := c.Bounds(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var f, t time.Time
+	if from == nil {
+		f = bmin
+	} else {
+		f = from.UTC()
+	}
+	if to == nil {
+		t = bmax
+	} else {
+		t = to.UTC()
+	}
+	if !t.After(f) {
+		t = f.Add(24 * time.Hour)
+	}
+
+	userClause := ""
+	if len(c.Members) > 0 {
+		users := make([]string, 0, len(c.Members))
+		for _, m := range c.Members {
+			if safeIdentPart(m.User) {
+				users = append(users, m.User)
+			}
+		}
+		if len(users) == 0 {
+			return nil, fmt.Errorf("成员列表无效")
+		}
+		userClause = " AND user IN (" + strings.Join(quoteStrings(users), ",") + ")"
+	}
+
+	// 按 UTC 日历日闭区间
+	fu, tu := f.UTC(), t.UTC()
+	d0 := time.Date(fu.Year(), fu.Month(), fu.Day(), 0, 0, 0, 0, time.UTC)
+	d1 := time.Date(tu.Year(), tu.Month(), tu.Day(), 0, 0, 0, 0, time.UTC)
+	if d1.Before(d0) {
+		d1 = d0
+	}
+
+	q := fmt.Sprintf(`
+SELECT
+  g_lat,
+  g_lon,
+  sum(cnt) AS w,
+  sum(sum_lat) / sum(cnt) AS lat,
+  sum(sum_lon) / sum(cnt) AS lon
+FROM %s.heatmap_grid
+WHERE day >= toDate(?) AND day <= toDate(?)
+%s
+GROUP BY g_lat, g_lon
+HAVING w >= ?
+ORDER BY w DESC
+`, identDB(c.Database), userClause)
+
+	rows, err := c.DB.QueryContext(ctx, q, d0, d1, minCount)
+	if err != nil {
+		return nil, fmt.Errorf("heatmap_grid查询失败（若表未创建请执行 resource/init.sql 与 heatmap_backfill.sql）: %w", err)
+	}
+	defer rows.Close()
+
+	var cells []HeatmapCell
+	for rows.Next() {
+		var glat, glon int32
+		var w uint64
+		var lat, lon float64
+		if err := rows.Scan(&glat, &glon, &w, &lat, &lon); err != nil {
+			return nil, err
+		}
+		cells = append(cells, HeatmapCell{
+			Lat: lat,
+			Lon: lon,
+			W:   float64(w),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	const gridScale = 10000.0 // 与 DDL 一致：round(lat * 10000)
+	// 1° 赤道约 111km →单格约 11.1m
+	gridMeters := 111_000.0 / gridScale
+
+	return &HeatmapResult{
+		Title:       c.Title,
+		From:        d0.Format("2006-01-02"),
+		To:          d1.Format("2006-01-02"),
+		GridMeters:  math.Round(gridMeters*10) / 10,
+		CellNote:    "按日分区、约 1e-4° 网格累加；locations 入库时由物化视图增量写入",
+		Cells:       cells,
+		Precomputed: true,
+	}, nil
+}
+
 func identDB(db string) string {
 	if db == "" {
 		return "owntracks"
