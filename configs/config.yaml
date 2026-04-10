@@ -12,6 +12,12 @@ auth:
   http_user: ""
   http_pass: ""
 
+# 高德地图 JS API 2.0（控制台创建「Web 端」Key，并启用安全密钥；与 web 同级，非 web 子项）
+# amap_key: ""
+# amap_security_js: ""
+# 高德 Web 服务 Key（逆地理入库 district_adcode）；须与控制台「Web 服务」类型一致，勿用 JS 端 amap_key。环境变量 AMAP_WEB_KEY 可覆盖。
+# amap_web_key: ""
+
 # Web 控制台 + HTTP 上报（与 App 填写的 host:port 一致）
 # 默认端口 8080；可改 port，或增加 listen 写完整地址（如 ":8443"，优先于 port）
 web:

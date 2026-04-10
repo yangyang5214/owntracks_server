@@ -9,10 +9,14 @@ import (
 
 // File 与 configs/config.yaml 结构对应。
 type File struct {
-	Auth       FileAuth       `yaml:"auth"`
-	Web        FileWeb        `yaml:"web"`
-	ClickHouse FileClickHouse `yaml:"clickhouse"`
-	Log        FileLog        `yaml:"log"`
+	Auth           FileAuth       `yaml:"auth"`
+	Web            FileWeb        `yaml:"web"`
+	ClickHouse     FileClickHouse `yaml:"clickhouse"`
+	Log            FileLog        `yaml:"log"`
+	AmapKey        string `yaml:"amap_key"`
+	AmapSecurityJs string `yaml:"amap_security_js"`
+	// AmapWebKey 高德 Web 服务 Key（逆地理入库 district_adcode）；与 amap_key（JS）分离，不可混用。
+	AmapWebKey string `yaml:"amap_web_key"`
 }
 
 // FileLog 日志输出（Kratos log）：默认文件路径见 DefaultLogFile；设为 "-" 或 "none" 则仅控制台。
@@ -46,7 +50,7 @@ func LoadFile(path string) (*File, error) {
 func FileToWeb(f *File) *WebConfig {
 	w := &WebConfig{
 		Listen:     ":8080",
-		Title:      "我的足迹",
+		Title:      "",
 		CHDatabase: defaultClickHouseDB,
 	}
 	if f == nil {
@@ -80,6 +84,9 @@ func FileToWeb(f *File) *WebConfig {
 	w.HTTPUser = f.Auth.HTTPUser
 	w.HTTPPass = f.Auth.HTTPPass
 	w.Pin = f.Web.Pin
+	w.AmapKey = f.AmapKey
+	w.AmapSecurityJs = f.AmapSecurityJs
+	w.AmapWebKey = f.AmapWebKey
 	return w
 }
 

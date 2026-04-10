@@ -95,7 +95,10 @@ func Run(cfg *conf.WebConfig, lg *log.Helper) error {
 	}))
 
 	mux.Handle("GET /api/meta", guard(jsonHandler(func(w http.ResponseWriter, r *http.Request) error {
-		return writeJSON(w, st.Meta(r.Context()))
+		meta := st.Meta(r.Context())
+		meta.AmapKey = cfg.AmapKey
+		meta.AmapSecurityJs = cfg.AmapSecurityJs
+		return writeJSON(w, meta)
 	})))
 	mux.Handle("GET /api/journey", guard(jsonHandler(func(w http.ResponseWriter, r *http.Request) error {
 		q := r.URL.Query()

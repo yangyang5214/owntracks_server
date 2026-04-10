@@ -2,13 +2,16 @@ package webapp
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-kratos/kratos/v2/log"
 
+	"owntracks_server/internal/amap"
 	"owntracks_server/internal/conf"
 	"owntracks_server/internal/owntracks"
 	"owntracks_server/internal/store"
@@ -28,7 +31,7 @@ func registerPubRoutes(mux *http.ServeMux, ch *store.CH, cfg *conf.WebConfig, lg
 			http.Error(w, "missing user or device", http.StatusBadRequest)
 			return
 		}
-		handlePub(w, r, ch, lg, user, device)
+		handlePub(w, r, ch, lg, cfg, user, device)
 	})))
 
 	mux.Handle("POST /pub", pub(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -37,7 +40,7 @@ func registerPubRoutes(mux *http.ServeMux, ch *store.CH, cfg *conf.WebConfig, lg
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		handlePub(w, r, ch, lg, user, device)
+		handlePub(w, r, ch, lg, cfg, user, device)
 	})))
 }
 
@@ -80,7 +83,7 @@ type errTopic string
 
 func (e errTopic) Error() string { return string(e) }
 
-func handlePub(w http.ResponseWriter, r *http.Request, ch *store.CH, lg *log.Helper, user, device string) {
+func handlePub(w http.ResponseWriter, r *http.Request, ch *store.CH, lg *log.Helper, cfg *conf.WebConfig, user, device string) {
 	b, err := io.ReadAll(io.LimitReader(r.Body, maxPubBody))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -114,26 +117,38 @@ func handlePub(w http.ResponseWriter, r *http.Request, ch *store.CH, lg *log.Hel
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		var district *string
+		if cfg.AmapWebKey != "" {
+			rctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			ad, err := amap.DistrictAdcode(rctx, cfg.AmapWebKey, loc.Lon, loc.Lat)
+			cancel()
+			if err != nil {
+				lg.Debugf("amap regeo: %v", err)
+			} else if ad != "" {
+				district = &ad
+			}
+		}
 		row := store.LocationRow{
-			User:        user,
-			Device:      device,
-			Topic:       topic,
-			EventTime:   loc.Tst,
-			IngestSeq:   uint16(i),
-			Lat:         loc.Lat,
-			Lon:         loc.Lon,
-			Acc:         loc.Acc,
-			Alt:         loc.Alt,
-			Vac:         loc.Vac,
-			Vel:         loc.Vel,
-			Cog:         loc.Cog,
-			Dist:        loc.Dist,
-			Tid:         loc.Tid,
-			TType:       loc.TType,
-			Trigger:     loc.Trigger,
-			Battery:     loc.Battery,
-			Charging:    loc.Charging,
-			PayloadJSON: string(raw),
+			User:           user,
+			Device:         device,
+			Topic:          topic,
+			EventTime:      loc.Tst,
+			IngestSeq:      uint16(i),
+			Lat:            loc.Lat,
+			Lon:            loc.Lon,
+			Acc:            loc.Acc,
+			Alt:            loc.Alt,
+			Vac:            loc.Vac,
+			Vel:            loc.Vel,
+			Cog:            loc.Cog,
+			Dist:           loc.Dist,
+			Tid:            loc.Tid,
+			TType:          loc.TType,
+			Trigger:        loc.Trigger,
+			Battery:        loc.Battery,
+			Charging:       loc.Charging,
+			DistrictAdcode: district,
+			PayloadJSON:    string(raw),
 		}
 		if err := ch.InsertLocation(ctx, row); err != nil {
 			lg.Errorf("insert location: %v", err)

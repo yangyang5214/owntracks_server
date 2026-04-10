@@ -45,6 +45,7 @@ func runWeb(_ *cobra.Command, _ []string) error {
 	}
 	w.HTTPUser = conf.FirstNonEmpty(os.Getenv("HTTP_USER"), w.HTTPUser)
 	w.HTTPPass = conf.FirstNonEmpty(os.Getenv("HTTP_PASS"), w.HTTPPass)
+	w.AmapWebKey = conf.FirstNonEmpty(os.Getenv("AMAP_WEB_KEY"), w.AmapWebKey)
 	if webListen != "" {
 		w.Listen = webListen
 	}

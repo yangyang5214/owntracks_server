@@ -31,6 +31,11 @@ type WebConfig struct {
 	HTTPPass string
 	// Pin 4 位数字访问密码；空则无需认证。
 	Pin string
+	// 高德地图 Web Key与安全密钥（注入 /api/meta 供前端加载 JS API）。
+	AmapKey        string
+	AmapSecurityJs string
+	// 高德 Web 服务 Key（服务端逆地理写入 district_adcode）；须为控制台「Web 服务」Key，勿填 JS 端 amap_key。
+	AmapWebKey string
 }
 
 // TeamMember 运行时成员（含展示名）。

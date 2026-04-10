@@ -35,6 +35,8 @@ type JourneyResult struct {
 	IntervalSec  int      `json:"interval_sec"`
 	IntervalNote string   `json:"interval_note"`
 	Series       []Series `json:"series"`
+	// DistrictAdcodes 轨迹时间范围内出现过的区县 adcode（依赖入库逆地理写入 locations.district_adcode）。
+	DistrictAdcodes []string `json:"district_adcodes,omitempty"`
 }
 
 // StatRow 成员统计。
@@ -62,6 +64,9 @@ type TeamMeta struct {
 	DefaultFullRange bool     `json:"default_full_range"`
 	DefaultDays      int      `json:"default_days"`
 	MaxIntervalSec   int      `json:"max_interval_sec"`
+	// 以下两项由 webapp 从配置注入，非 ClickHouse 查询结果。
+	AmapKey        string `json:"amap_key,omitempty"`
+	AmapSecurityJs string `json:"amap_security_js,omitempty"`
 }
 
 // HeatmapCell 预聚合网格单元（用于前端热力图层）。

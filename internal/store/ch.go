@@ -181,6 +181,10 @@ ORDER BY user, device, bucket
 	series := make([]Series, 0, len(buckets))
 	idx := 0
 	for k, pts := range buckets {
+		pts = dedupePointsSameLatLon(pts)
+		if len(pts) == 0 {
+			continue
+		}
 		label := fmt.Sprintf("%s / %s", k.u, k.d)
 		series = append(series, Series{
 			User:   k.u + "/" + k.d,
@@ -201,14 +205,47 @@ ORDER BY user, device, bucket
 		return ti.Before(tj)
 	})
 
+	var districtAdcodes []string
+	if adc, err := c.districtAdcodesInRange(ctx, f, t, userClause); err == nil {
+		districtAdcodes = adc
+	}
+
 	return &JourneyResult{
-		Title:        c.Title,
-		From:         f.Format(time.RFC3339Nano),
-		To:           t.Format(time.RFC3339Nano),
-		IntervalSec:  intervalSec,
-		IntervalNote: "按时间桶聚合；间隔会随时间跨度自动上调以控制点数",
-		Series:       series,
+		Title:           c.Title,
+		From:            f.Format(time.RFC3339Nano),
+		To:              t.Format(time.RFC3339Nano),
+		IntervalSec:     intervalSec,
+		IntervalNote:    "按时间桶聚合；间隔会随时间跨度自动上调以控制点数",
+		Series:          series,
+		DistrictAdcodes: districtAdcodes,
 	}, nil
+}
+
+func (c *CH) districtAdcodesInRange(ctx context.Context, f, t time.Time, userClause string) ([]string, error) {
+	q := fmt.Sprintf(`
+SELECT DISTINCT district_adcode
+FROM %s.locations
+WHERE event_time >= ? AND event_time <= ?`+userClause+`
+  AND district_adcode IS NOT NULL
+  AND district_adcode != ''
+ORDER BY district_adcode
+`, identDB(c.Database))
+	rows, err := c.DB.QueryContext(ctx, q, f, t)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	return out, rows.Err()
 }
 
 // Stats 汇总。
@@ -300,8 +337,8 @@ ORDER BY user, device
 	}, rows.Err()
 }
 
-// Heatmap读取 heatmap_grid 预聚合表（由物化视图随 locations 增量维护；历史数据需执行一次 backfill SQL）。
-// 网格：约 1e-4° 步长（赤道 ~11m），与 init.sql 中 MV 定义一致。
+// Heatmap读取 heatmap_grid（ReplacingMergeTree + MV；同坐标去重，历史库见 migrate_heatmap_replacing.sql）。
+// 网格：约 1e-4° 步长（赤道 ~11m），与 init.sql 一致。
 func (c *CH) Heatmap(ctx context.Context, from, to *time.Time, minCount int) (*HeatmapResult, error) {
 	if minCount < 1 {
 		minCount = 1
@@ -351,9 +388,9 @@ func (c *CH) Heatmap(ctx context.Context, from, to *time.Time, minCount int) (*H
 SELECT
   g_lat,
   g_lon,
-  sum(cnt) AS w,
-  sum(sum_lat) / sum(cnt) AS lat,
-  sum(sum_lon) / sum(cnt) AS lon
+  uniqExact(tuple(lat_key, lon_key)) AS w,
+  avg(lat) AS lat,
+  avg(lon) AS lon
 FROM %s.heatmap_grid
 WHERE day >= toDate(?) AND day <= toDate(?)
 %s
@@ -364,7 +401,7 @@ ORDER BY w DESC
 
 	rows, err := c.DB.QueryContext(ctx, q, d0, d1, minCount)
 	if err != nil {
-		return nil, fmt.Errorf("heatmap_grid查询失败（若表未创建请执行 resource/init.sql 与 heatmap_backfill.sql）: %w", err)
+		return nil, fmt.Errorf("heatmap_grid查询失败（若表未创建请执行 resource/init.sql 或迁移 resource/migrate_heatmap_replacing.sql）: %w", err)
 	}
 	defer rows.Close()
 
@@ -395,10 +432,30 @@ ORDER BY w DESC
 		From:        d0.Format("2006-01-02"),
 		To:          d1.Format("2006-01-02"),
 		GridMeters:  math.Round(gridMeters*10) / 10,
-		CellNote:    "按日分区、约 1e-4° 网格累加；locations 入库时由物化视图增量写入",
+		CellNote:    "ReplacingMergeTree：年分区内用户+设备+量化坐标一条（ORDER BY 不含 day）；读图按格 uniqExact 计数",
 		Cells:       cells,
 		Precomputed: true,
 	}, nil
+}
+
+// dedupePointsSameLatLon 相同经纬度只保留时间上最新的一条（字符串键保留 8 位小数，与常见 GPS 精度一致）。
+func dedupePointsSameLatLon(pts []Point) []Point {
+	if len(pts) <= 1 {
+		return pts
+	}
+	seen := make(map[string]Point, len(pts))
+	for _, p := range pts {
+		key := fmt.Sprintf("%.8f,%.8f", p.Lat, p.Lon)
+		if cur, ok := seen[key]; !ok || p.T.After(cur.T) {
+			seen[key] = p
+		}
+	}
+	out := make([]Point, 0, len(seen))
+	for _, p := range seen {
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].T.Before(out[j].T) })
+	return out
 }
 
 func identDB(db string) string {
@@ -446,6 +503,7 @@ type LocationRow struct {
 	Tid, TType, Trigger *string
 	Battery             *int16
 	Charging            *uint8
+	DistrictAdcode      *string
 	PayloadJSON         string
 }
 
@@ -455,12 +513,16 @@ func (c *CH) InsertLocation(ctx context.Context, row LocationRow) error {
 	q := `INSERT INTO ` + tbl + ` (
   user, device, topic, event_time, ingest_seq,
   lat, lon, acc, alt, vac, vel, cog, dist,
-  tid, t, ` + "`trigger`" + `, battery, charging, payload_json
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  tid, t, ` + "`trigger`" + `, battery, charging, district_adcode, payload_json
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	var district any
+	if row.DistrictAdcode != nil {
+		district = *row.DistrictAdcode
+	}
 	_, err := c.DB.ExecContext(ctx, q,
 		row.User, row.Device, row.Topic, row.EventTime, row.IngestSeq,
 		row.Lat, row.Lon, row.Acc, row.Alt, row.Vac, row.Vel, row.Cog, row.Dist,
-		row.Tid, row.TType, row.Trigger, row.Battery, row.Charging, row.PayloadJSON,
+		row.Tid, row.TType, row.Trigger, row.Battery, row.Charging, district, row.PayloadJSON,
 	)
 	return err
 }
